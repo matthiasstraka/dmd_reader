@@ -32,3 +32,10 @@ class DmdReader:
         Return the DMD file version
         """
         return self._header.version
+
+    @property
+    def dmd_library(self) -> str:
+        """
+        Return the identifier of the DMD library used to write the DMD file
+        """
+        return self._header.library_version

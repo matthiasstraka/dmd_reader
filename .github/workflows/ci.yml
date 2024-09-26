@@ -23,3 +23,5 @@ jobs:
       run: python example.py
     - name: Analyzing the code with pylint
       run: python -m pylint .
+    - name: Run unit tests
+      run: python -m pytest
