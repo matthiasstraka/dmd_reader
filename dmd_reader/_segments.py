@@ -11,8 +11,9 @@ class SegmentType(Enum):
     A name for the segment
     """
     UNKNOWN = -1
-    FILE_HEADER = 0
-    FILE_FOOTER = 1
+    FILE_HEADER = 0 << 8
+    CFG = 1 << 8
+    FILE_FOOTER = 5 << 8
 
 class FileSegment:
     """
@@ -22,63 +23,79 @@ class FileSegment:
         self.segment_type = segment_type
         self.segment_offset = offset
         self.segment_size = size
-        self.crc = getattr(self, 'crc', 0)
+        self.data = None
 
-class FileInfoSegment(FileSegment):
-    """
-    Base class for file info segments
-    """
-    FILE_INFO_SIZE = 4 + 2 + 2 + 2 + 1 + 64
-    def __init__(self, f, segment_type = SegmentType.UNKNOWN, block_offset = 0, block_size = 0):
-        super().__init__(segment_type, block_offset, block_size)
-        data = f.read(FileInfoSegment.FILE_INFO_SIZE)
-        self.file_identifier = data[0:4].decode('ascii')
-        self.version = Version(*unpack("<HH", data[4:8]))
-        self.header_size, self.calc_crc_in_ctrl_blocks = unpack("<H?", data[8:11])
-        library_version_sz = data[11:]
-        nullterm = library_version_sz.find(b'\x00')
-        if nullterm != -1:
-            self.library_version = library_version_sz[:nullterm].decode('ascii')
-        else:
-            self.library_version = library_version_sz.decode('ascii')
-        self.crc = crc32(data, self.crc)
-
-class FileHeader(FileInfoSegment):
+class FileHeader(FileSegment):
     """
     Global file header
     """
     BLOCK_SIZE = 4096
-    def __init__(self, f):
-        f.seek(0, 1)
-        super().__init__(f, SegmentType.FILE_HEADER, 0, FileHeader.BLOCK_SIZE)
-        crc_in_file = int.from_bytes(f.read(4), "little")
-        if crc_in_file != self.crc:
-            raise RuntimeError("Invalid header CRC")
+    HEADER_SIZE = 4 + 2 + 2 + 2 + 1 + 64
+    def __init__(self, data, segment_type=SegmentType.FILE_HEADER):
+        super().__init__(segment_type, 0, FileHeader.BLOCK_SIZE)
+        tag, ver_major, ver_minor, self.header_size, self.calc_crc_in_ctrl_blocks, lib_version = unpack("<4sHHH?64s", data)
+        if tag != b'DMDF':
+            raise RuntimeError("Invalid file header")
+        self.version = Version(ver_major, ver_minor)
+        nullterm = lib_version.find(b'\x00')
+        if nullterm != -1:
+            self.library_version = lib_version[:nullterm].decode('ascii')
+        else:
+            self.library_version = lib_version.decode('ascii')
 
-class FileFooter(FileInfoSegment):
+class FileFooter(FileHeader):
     """
     Global file footer
     """
-    BLOCK_SIZE = 4096
-    def __init__(self, f):
-        f.seek(-FileFooter.BLOCK_SIZE, 2) # Footer is at the end of the file
-        file_offset = f.tell()
-        data = f.read(8)
-        self.crc = crc32(data)
-        self.footer_tag = data.decode('ascii')
-
-        super().__init__(f, SegmentType.FILE_FOOTER, file_offset, FileFooter.BLOCK_SIZE)
-
-        data = f.read(2)
-        self.crc = crc32(data, self.crc)
-        ctrl_seg_cnt = int.from_bytes(data, "little")
+    def __init__(self, data):
+        super().__init__(data, SegmentType.FILE_FOOTER)
         self.ctrl_segments = []
-        for _ in range(ctrl_seg_cnt):
-            data = f.read(4 + 8)
-            self.crc = crc32(data, self.crc)
-            offset_and_size = unpack("<IQ", data[0:12])
-            self.ctrl_segments.append(offset_and_size)
 
-        crc_in_file = int.from_bytes(f.read(4), "little")
-        if crc_in_file != self.crc:
-            raise RuntimeError("Invalid footer CRC")
+def read_file_header(f):
+    data = f.read(FileHeader.HEADER_SIZE + 4)
+    header = FileHeader(data[:FileHeader.HEADER_SIZE])
+    crc_in_file = int.from_bytes(data[-4:], "little")
+    if crc_in_file != crc32(data[:-4]):
+        raise RuntimeError("Invalid header CRC")
+    return header
+
+def read_file_footer(f):
+    f.seek(-FileHeader.BLOCK_SIZE, 2)
+    file_offset = f.tell()
+    data = f.read(8 + FileHeader.HEADER_SIZE + 2)
+    tag = data[0:8]
+    if tag != b'NOHD_END':
+        raise RuntimeError("Invalid file header")
+    offset = 8
+    footer = FileFooter(data[offset:(offset+FileHeader.HEADER_SIZE)])
+    footer.segment_offset = file_offset
+    offset += FileHeader.HEADER_SIZE
+    ctrl_seg_cnt = int.from_bytes(data[offset:offset+2], "little")
+    crc = crc32(data)
+    footer.ctrl_segments = []
+    for _ in range(ctrl_seg_cnt):
+        data = f.read(4 + 8)
+        crc = crc32(data, crc)
+        offset_and_size = unpack("<IQ", data)
+        footer.ctrl_segments.append(offset_and_size)
+
+    crc_in_file = int.from_bytes(f.read(4), "little")
+    if crc_in_file != crc:
+        raise RuntimeError("Invalid footer CRC")
+
+    return footer
+
+def read_file_segment(f):
+    file_offset = f.tell()
+    data = f.read(20)
+    tag, data_size, block_size, seg_id, seg_type, crc_in_file = unpack("<4sIIHHI", data)
+    if tag != b'DMDH':
+        raise RuntimeError("Invalid segment tag")
+    if crc_in_file != crc32(data[:-5]):
+        raise RuntimeError("Invalid segment CRC")
+    segment = FileSegment(type, file_offset, block_size)
+    segment.id = seg_id
+    if seg_type == SegmentType.CFG.value:
+        segment.data = f.read(data_size).decode('utf-8')
+        return segment
+    return None
