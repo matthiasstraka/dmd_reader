@@ -3,10 +3,13 @@
 This is a python library that can read data from the DMD file format.
 It is modelled after https://github.com/DEWETRON/pyDmdReader/ but uses no dynamic libraries.
 
+Note that this is not an officially supported DMD reader library by Dewetron and the support of all DMD features is not guaranteed.
+Use [DEWETRON/pyDmdReader](https://github.com/DEWETRON/pyDmdReader/) for a full featured version with a shared library backend.
+
 # License
 MIT License
 
-Copyright (c) 2024 DEWETRON
+Copyright (c) 2024 Matthias Straka
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
